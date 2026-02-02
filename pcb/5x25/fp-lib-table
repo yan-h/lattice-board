@@ -1,0 +1,5 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "LatticeBoard")(type "KiCad")(uri "/Users/yan/Library/CloudStorage/GoogleDrive-yanhan13@gmail.com/My Drive/projects/lattice-board/pcb/lib/LatticeBoard.pretty")(options "")(descr ""))
+  (lib (name "LatticeBoard_Prototype")(type "KiCad")(uri "/Users/yan/Library/CloudStorage/GoogleDrive-yanhan13@gmail.com/My Drive/projects/lattice-board/pcb/lib/LatticeBoard_Prototype.pretty")(options "")(descr ""))
+)

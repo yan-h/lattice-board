@@ -1,0 +1,26 @@
+Write a script to connect keyswitch matrix rows and columns in KiCad. 
+- Example of row pad: pad 1 of Dn (n is a number)
+- Example of column pin: pin 1 of SWn (n is a number)
+
+Total number of keyswitches: 125 
+
+Wire rows in the following patterns:
+- Horizontal (reference [2,3]): 
+  - On odd rows [1,2,3], [4,5,6], [7,8,9], [10,11,12]
+  - On even rows [14,15,16], [17,18,19], [20,21,22], [23,24,25]
+- Vertical (reference [3,4]): 
+  - On odd rows [3,4], [9,10]
+  - On even rows [13,14], [19,20]
+- Diagonal (reference [6,7]): 
+  - On odd rows [6,7]
+  - On even rows [16,17], [22,23]
+
+Wire columns in the following patterns:
+- one special case column (template [13, 38]): [13, 38, 63, ...]
+- Columns connections may be vertical or diagonal.
+  - Vertical (reference 2, 15)
+  - Diagonal (reference 4, 17)
+- A column starts in every switch from 1 through 12
+  - For columns on 1,2,3 and 7,8,9, the first connection is diagonal, then vertical, then alternating between the two
+  - For other columns, the first connection is vertical, then diagonal, then alternating between the two
+- Jump length is always +13 between the first two switches in a column, then +12, then alternating between the two

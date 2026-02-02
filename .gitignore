@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# KiCad / PCB
+# Ignore cache and temporary files
+**/fp-info-cache
+**/fabrication-toolkit-options.json
+*.kicad_prl
+*.lck
+*.gbrjob
+
+# Ignore backup directories
+**/*-backups/
+
+# Ignore production artifacts (if generated locally and not desired in repo)
+pcb/prototype/production/
+pcb/medium/production/
+
+# Rust / Firmware
+target/
+*.uf2
+*.bin
+*.hex
+*.svd

@@ -1,0 +1,6 @@
+{
+    "rust-analyzer.cargo.target": "aarch64-apple-darwin",
+    "rust-analyzer.check.command": "check",
+    "rust-analyzer.check.allTargets": true,
+    "rust-analyzer.cargo.features": "all"
+}

@@ -1,0 +1,4 @@
+(version 1)
+(rule "Allow_LED_at_Edge"
+    (constraint edge_clearance (min 0.2mm))
+    (condition "A.memberOfFootprint('LED*')"))

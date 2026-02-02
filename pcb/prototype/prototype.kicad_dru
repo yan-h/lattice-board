@@ -1,0 +1,5 @@
+(version 1)
+(rule "Allow_LED_Pads_Edge"
+    (condition "A.Type == 'Pad' && A.memberOfFootprint('L*')")
+    (constraint edge_clearance (min -0.1mm))
+)

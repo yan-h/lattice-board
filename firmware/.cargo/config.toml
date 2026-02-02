@@ -1,0 +1,13 @@
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+# Set line coding to 2 Stop Bits to signal a reset, wait, then flash
+runner = [
+    "sh",
+    "-c",
+    "stty -f /dev/tty.usbmodem* speed 1200; sleep 3; elf2uf2-rs -d $0",
+]
+
+[build]
+target = "thumbv6m-none-eabi" # Cortex-M0 and Cortex-M0+
+
+[env]
+DEFMT_LOG = "debug"
