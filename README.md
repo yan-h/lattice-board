@@ -1,7 +1,8 @@
 MIDI controller using the Wicki-Hayden layout. Heavily inspired by [Hexboard](https://shapingthesilence.com/tech/hexboard-midi-controller/), [Striso](https://www.striso.org) and [Lumatone](https://www.lumatone.io).
 - 123 keys with individual LED lighting
   - 5 octaves
-  - Fifthspan of 25 - i.e. each octave contains 25 notes, spanning a continuous segment of the chain of fifths
+  - Fifthspan of 25 - i.e. each octave contains 25 notes, spanning an unbroken segment of the chain of fifths
+    - Size of fifth is adjustable in firmware, providing easy access to all temperaments based on pure octaves and a chain of equal-sized perfect fifths.
 - Very portable
   - 21x22x2.5cm
   - Similar in size to a small tablet, and much lighter than one.
