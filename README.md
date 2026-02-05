@@ -14,6 +14,7 @@ Engineering overview
   - Printed using a Bambu Lab P1S. Keycaps were printed with the Darkmoon Satin build plate, to obtain a texture finer than a textured PEI plate, but coarser than a smooth plate.
 - TTC Frozen Silent V2 Keyswitches - fully transparent, light condenser, silent.
 - PCB designed in KiCad 9, manufactured with JLCPCB
+- Firmware in Rust with [Embassy](embassy.dev). Heavily vibecoded.
 
 ![PXL_20260202_012643973](https://github.com/user-attachments/assets/024bc8af-1104-46bf-8a43-0e63082621a8)
 ![PXL_20260202_012527108](https://github.com/user-attachments/assets/97ccf371-84ad-441b-bd6c-b121cd6831d7)
