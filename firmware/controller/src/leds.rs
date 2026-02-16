@@ -177,12 +177,12 @@ pub async fn led_task(
                 // Check if this LED should be lit by any active interaction (held keys)
                 if active_lit.contains(&coord) {
                     // Move 1/3 of the way towards white (255)
-                    r_f = (r_f * 2.0 + 255.0) / 3.0;
-                    g_f = (g_f * 2.0 + 255.0) / 3.0;
-                    b_f = (b_f * 2.0 + 255.0) / 3.0;
+                    r_f = r_f + (255.0 - r_f) * 0.6;
+                    g_f = g_f + (255.0 - g_f) * 0.6;
+                    b_f = b_f + (255.0 - b_f) * 0.6;
 
                     // Double the brightness
-                    scale *= 2.0;
+                    scale *= 3.0;
                 }
 
                 let r = (r_f * scale).min(255.0) as u8;
