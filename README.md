@@ -6,6 +6,7 @@ MIDI controller using the Wicki-Hayden layout. Heavily inspired by [Hexboard](ht
 - Very portable
   - 21x22x2.5cm
   - Similar in size to a small tablet, and much lighter than one.
+- Tiny keys (17mm) for my tiny hands (and easier microtonal chords)
 - No velocity sensitivity (or any other form of MIDI expression). This simplifies the engineering constraints by a lot, and let me design it as a very weirdly shaped mechanical keyboard.
 
 Engineering overview
