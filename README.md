@@ -15,6 +15,7 @@ Engineering overview
 - TTC Frozen Silent V2 Keyswitches - fully transparent, light condenser, silent.
 - PCB designed in KiCad 9, manufactured with JLCPCB
 - Firmware in Rust with [Embassy](https://embassy.dev/). Heavily vibecoded.
+  - See [firmware/README.md](firmware/README.md) for build and flashing instructions, and the serial configuration dashboard.
 
 ![PXL_20260202_012643973](https://github.com/user-attachments/assets/024bc8af-1104-46bf-8a43-0e63082621a8)
 ![PXL_20260202_012527108](https://github.com/user-attachments/assets/97ccf371-84ad-441b-bd6c-b121cd6831d7)
