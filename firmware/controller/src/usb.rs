@@ -125,8 +125,8 @@ async fn serial_process(
                         b'B' => rgb.b = clamp_u8(rgb.b, 5),
                         b'L' => config.brightness = (config.brightness + 0.05).min(1.0),
                         b'l' => config.brightness = (config.brightness - 0.05).max(0.0),
-                        b'+' | b'=' => config.brightness = (config.brightness + 0.01).min(1.0),
-                        b'-' | b'_' => config.brightness = (config.brightness - 0.01).max(0.0),
+                        b'+' | b'=' => config.brightness = (config.brightness + 0.02).min(1.0),
+                        b'-' | b'_' => config.brightness = (config.brightness - 0.02).max(0.0),
                         b'H' => config.hue_offset = (config.hue_offset + 1.0) % 360.0,
                         b'h' => config.hue_offset = (config.hue_offset - 1.0 + 360.0) % 360.0,
                         b't' | b'T' => {
@@ -136,10 +136,6 @@ async fn serial_process(
                         b')' => crate::tuning::adjust_fifth_size(1.0),
                         b'{' => crate::tuning::adjust_fifth_size(-0.1),
                         b'}' => crate::tuning::adjust_fifth_size(0.1),
-                        b',' => crate::tuning::adjust_mpe_pbr(-1.0),
-                        b'.' => crate::tuning::adjust_mpe_pbr(1.0),
-                        b'<' => crate::tuning::adjust_mpe_pbr(-0.1),
-                        b'>' => crate::tuning::adjust_mpe_pbr(0.1),
                         _ => {}
                     }
                     config.rgb_anchors[sel] = rgb;
@@ -209,6 +205,15 @@ async fn draw_dashboard(class: &mut CdcAcmClass<'static, Driver<'static, periphe
         }
         let _ = write!(out, "\x1B[K\r\n");
     }
+
+    let _ = write!(
+        out,
+        "\r\n\x1B[1mShortcuts:\x1B[0m\x1B[K\r\n\
+         [ / ]  Prev/Next Color  | r/R, g/G, b/B Adjust RGB\x1B[K\r\n\
+         H / h  Hue Shift        | L / l, + / -  Brightness\x1B[K\r\n\
+         t / T  Toggle Mode     | ( / ), {{ / }}  Fifth Size\x1B[K\r\n\
+         d / D  Exit Dashboard\x1B[K\r\n"
+    );
 
     let _ = write!(out, "\r\nRemote MIDI:\x1B[K\r\n");
     crate::midi::REMOTE_VOICES.lock(|v| {

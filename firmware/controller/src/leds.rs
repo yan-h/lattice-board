@@ -21,7 +21,7 @@ pub struct LedConfig {
 
 pub static LED_CONFIG: Mutex<CriticalSectionRawMutex, RefCell<LedConfig>> =
     Mutex::new(RefCell::new(LedConfig {
-        brightness: 0.05,
+        brightness: 0.14,
         hue_offset: 0.0,
         // Standard 12-tone Rainbow as default
         rgb_anchors: [
