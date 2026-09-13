@@ -17,5 +17,7 @@ Engineering overview
 - Firmware in Rust with [Embassy](https://embassy.dev/). Heavily vibecoded.
   - See [firmware/README.md](firmware/README.md) for build and flashing instructions, and the serial configuration dashboard.
 
+Future work: [7-octave, fifthspan-50 redesign findings](docs/7x50-redesign-notes.md).
+
 ![PXL_20260202_012643973](https://github.com/user-attachments/assets/024bc8af-1104-46bf-8a43-0e63082621a8)
 ![PXL_20260202_012527108](https://github.com/user-attachments/assets/97ccf371-84ad-441b-bd6c-b121cd6831d7)
