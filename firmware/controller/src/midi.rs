@@ -92,19 +92,22 @@ pub async fn midi_task(
         loop {
             let event = receiver.receive().await;
 
+            if crate::tuning::take_recenter_bends() {
+                for channel in (1..16).filter_map(index_to_channel) {
+                    let center = MidiMessage::PitchBendChange(
+                        channel,
+                        wmidi::U14::try_from(8192u16).unwrap(),
+                    );
+                    try_send_midi_message(&mut sender, &center).await;
+                }
+            }
+
             match event {
                 MidiEvent::NoteOn {
                     channel,
                     note,
                     velocity,
                 } => {
-                    // Send Pitch Bend Reset (8192) first to ensure no lingering MPE bend affects this note
-                    let pb_reset = MidiMessage::PitchBendChange(
-                        channel,
-                        wmidi::U14::try_from(8192u16).unwrap(),
-                    );
-                    try_send_midi_message(&mut sender, &pb_reset).await;
-
                     let msg = MidiMessage::NoteOn(channel, note, velocity);
                     try_send_midi_message(&mut sender, &msg).await;
                 }

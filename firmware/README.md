@@ -69,7 +69,7 @@ The port starts in **log mode**, streaming `log`/defmt-style output. Press `d` t
 | `H` / `h` | shift hue offset ±1° |
 | `L` / `l` | brightness ±0.05 |
 | `+` / `-` | brightness ±0.02 (fine) |
-| `t` | toggle tuning mode: `Standard` (12-TET MIDI notes) ↔ `Fifths` (MPE, adjustable fifth) |
+| `t` | toggle tuning mode: `Fifths` (default: 12-TET note + 12-fifth comma-bank channel; Ch 1 = D♭..F♯, Ch 2 = +12 fifths, Ch 16 = −12 fifths) ↔ `Standard` (firmware-tuned MPE / 12-TET) |
 | `(` / `)` | fifth size ±1 cent (clamped to 600–800¢) |
 | `{` / `}` | fifth size ±0.1 cent |
 | `d` | back to log mode |
