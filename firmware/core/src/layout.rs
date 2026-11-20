@@ -4,7 +4,7 @@ use core::fmt::Debug;
 /// On the controller, the grid is physically rotated by ~21 degrees, and slightly staggered.
 ///
 /// Going one step to the right (x + 1) is a major second (2 fifths, down an octave)
-/// Going one step up (y + 1) is an ascending perfect fourth (-1 fifth, up an octave)
+/// Going one step up (y + 1) is a descending perfect fourth (1 fifth, down an octave)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Coordinate {
     pub x: i8,
@@ -26,34 +26,10 @@ pub trait Layout: Sync {
     fn led_to_coord(idx: LedIndex) -> Option<Coordinate>;
 
     /// Convert a logical lattice coordinate to a physical LED index.
-    #[allow(dead_code)]
     fn coord_to_led(coord: Coordinate) -> Option<LedIndex>;
 
     /// Returns the logical Coordinate that corresponds to Middle C (MIDI 60).
     fn center_coord() -> Coordinate;
-
-    /// Convert a Coordinate to a generic MIDI pitch (0-127).
-    /// Default implementation maps `center_coord()` to 60.
-    fn coord_to_midi(coord: Coordinate) -> u8 {
-        let center = Self::center_coord();
-        let base_note = 60i16; // Middle C
-
-        // Calculate relative steps from center
-        let dx = coord.x as i16 - center.x as i16;
-        let dy = coord.y as i16 - center.y as i16;
-
-        // Note = Base + (dx * 2) - (dy * 5)
-        let note = base_note + (dx * 2) - (dy * 5);
-
-        // Clamp to valid MIDI range
-        if note < 0 {
-            0
-        } else if note > 127 {
-            127
-        } else {
-            note as u8
-        }
-    }
 }
 
 /// Encode a Wicki-Hayden coordinate relative to `center` as `(channel, note)`

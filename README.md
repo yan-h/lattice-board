@@ -2,7 +2,8 @@ MIDI controller using the Wicki-Hayden layout. Heavily inspired by [Hexboard](ht
 - 123 keys with individual LED lighting
   - 5 octaves
   - Fifthspan of 25 - i.e. each octave contains 25 notes, spanning an unbroken segment of the chain of fifths
-    - Size of fifth is adjustable in firmware, providing easy access to all temperaments based on pure octaves and a chain of equal-sized perfect fifths.
+    - Sends normal 12-TET MIDI notes, but the channel says which run of 12 fifths the key is in (Ch 1 = D♭ to F♯, Ch 2 = the 12 above that, Ch 16 = the 12 below). Ignore the channel and it's just a 12-TET keyboard. Decode it in a plugin and you get every temperament based on pure octaves and a chain of equal-sized perfect fifths.
+    - There used to be a second mode where the firmware did the tuning itself over MPE. But this one is basically 12-TET mode with different channels sometimes, so I cut it.
 - Very portable
   - 21x22x2.5cm
   - Similar in size to a small tablet, and much lighter than one.

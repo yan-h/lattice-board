@@ -1,148 +1,72 @@
-use core::cell::{Cell, RefCell};
+use core::cell::RefCell;
 use embassy_futures::join::join;
 use embassy_rp::peripherals::USB;
 use embassy_rp::usb::Driver as UsbDriver;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::channel::{Receiver, Sender};
 use embassy_time::{with_timeout, Duration, Timer};
 use embassy_usb::class::midi::MidiClass;
 use heapless::Vec;
 use log::{error, info};
-use wmidi::*;
+use wmidi::{Channel, MidiMessage, Note};
 
-// ----------------------------------------------------------------------------
-// Remote Voice Tracking (for LED Visualization)
-// ----------------------------------------------------------------------------
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct RemoteVoice {
+/// A key's note turning on or off.
+#[derive(Debug, Clone, Copy)]
+pub struct NoteEvent {
     pub channel: Channel,
     pub note: Note,
-    pub velocity: U7,
-    pub pitch_bend: u16, // Raw 14-bit value (0-16383, center 8192)
+    pub on: bool,
 }
 
-pub static REMOTE_VOICES: Mutex<
-    CriticalSectionRawMutex,
-    RefCell<Vec<RemoteVoice, 32>>, // Support polyphony
-> = Mutex::new(RefCell::new(Vec::new()));
+pub const NOTE_QUEUE_LEN: usize = 32;
+pub type NoteSender = Sender<'static, CriticalSectionRawMutex, NoteEvent, NOTE_QUEUE_LEN>;
+pub type NoteReceiver = Receiver<'static, CriticalSectionRawMutex, NoteEvent, NOTE_QUEUE_LEN>;
 
-pub static CHANNEL_BENDS: Mutex<CriticalSectionRawMutex, Cell<[u16; 16]>> =
-    Mutex::new(Cell::new([8192u16; 16]));
+const VELOCITY: u8 = 100;
 
-// ----------------------------------------------------------------------------
-// MIDI Task Types
-// ----------------------------------------------------------------------------
+/// Bytes per USB packet: 15 four-byte USB-MIDI events. Staying under the
+/// 64-byte maximum keeps every packet short, so the host delivers it at once
+/// rather than waiting for the transfer to continue.
+const PACKET_LEN: usize = 60;
 
-// Define a local trait to add functionality to u8
-pub trait ToU7 {
-    fn to_u7(self) -> U7;
-}
-
-// Implement the trait for u8
-impl ToU7 for u8 {
-    fn to_u7(self) -> U7 {
-        U7::new(self.min(127)).unwrap()
-    }
-}
-
-// Define the event type for inter-task communication
-#[derive(Debug, Clone, Copy)]
-pub enum MidiEvent {
-    NoteOn {
-        channel: wmidi::Channel,
-        note: Note,
-        velocity: U7,
-    },
-    NoteOff {
-        channel: wmidi::Channel,
-        note: Note,
-        velocity: U7,
-    },
-    #[allow(dead_code)]
-    PitchBendChange {
-        channel: wmidi::Channel,
-        value: u16, // 14-bit value (0-16383, center 8192)
-    },
-    MpeNoteOn {
-        channel: wmidi::Channel,
-        note: Note,
-        velocity: U7,
-        pitch_bend: u16,
-    },
-}
+/// Notes the host is playing back to us, for the LEDs.
+pub static REMOTE_VOICES: Mutex<CriticalSectionRawMutex, RefCell<Vec<(Channel, Note), 32>>> =
+    Mutex::new(RefCell::new(Vec::new()));
 
 #[embassy_executor::task]
-pub async fn midi_task(
-    midi: MidiClass<'static, UsbDriver<'static, USB>>,
-    receiver: embassy_sync::channel::Receiver<
-        'static,
-        embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-        MidiEvent,
-        32,
-    >,
-) {
+pub async fn midi_task(midi: MidiClass<'static, UsbDriver<'static, USB>>, receiver: NoteReceiver) {
     // Wait a moment for USB to settle
     Timer::after(Duration::from_millis(1000)).await;
     info!("MIDI Task Started!");
 
     let (mut sender, mut rx) = midi.split();
 
+    // Sends each event as soon as it arrives, along with any queued behind
+    // it, so a chord goes out in one packet.
     let send_future = async {
+        let mut packet = [0u8; PACKET_LEN];
         loop {
-            let event = receiver.receive().await;
-
-            if crate::tuning::take_recenter_bends() {
-                for channel in (1..16).filter_map(index_to_channel) {
-                    let center = MidiMessage::PitchBendChange(
-                        channel,
-                        wmidi::U14::try_from(8192u16).unwrap(),
-                    );
-                    try_send_midi_message(&mut sender, &center).await;
+            let mut len = 0;
+            let mut event = receiver.receive().await;
+            loop {
+                packet[len..len + 4].copy_from_slice(&usb_midi_event(event));
+                len += 4;
+                if len == PACKET_LEN {
+                    break;
+                }
+                match receiver.try_receive() {
+                    Ok(next) => event = next,
+                    Err(_) => break,
                 }
             }
 
-            match event {
-                MidiEvent::NoteOn {
-                    channel,
-                    note,
-                    velocity,
-                } => {
-                    let msg = MidiMessage::NoteOn(channel, note, velocity);
-                    try_send_midi_message(&mut sender, &msg).await;
-                }
-                MidiEvent::NoteOff {
-                    channel,
-                    note,
-                    velocity,
-                } => {
-                    let msg = MidiMessage::NoteOff(channel, note, velocity);
-                    try_send_midi_message(&mut sender, &msg).await;
-                }
-                MidiEvent::PitchBendChange { channel, value } => {
-                    let msg = MidiMessage::PitchBendChange(
-                        channel,
-                        wmidi::U14::try_from(value.clamp(0, 16383)).unwrap(),
-                    );
-                    try_send_midi_message(&mut sender, &msg).await;
-                }
-                MidiEvent::MpeNoteOn {
-                    channel,
-                    note,
-                    velocity,
-                    pitch_bend,
-                } => {
-                    // Send Pitch Bend first
-                    let pb_msg = MidiMessage::PitchBendChange(
-                        channel,
-                        wmidi::U14::try_from(pitch_bend.clamp(0, 16383)).unwrap(),
-                    );
-                    try_send_midi_message(&mut sender, &pb_msg).await;
-
-                    // Then Note On
-                    let note_msg = MidiMessage::NoteOn(channel, note, velocity);
-                    try_send_midi_message(&mut sender, &note_msg).await;
-                }
+            match with_timeout(Duration::from_millis(10), sender.write_packet(&packet[..len]))
+                .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => error!("MIDI packet write failed (USB error)"),
+                Err(_) => error!("MIDI packet write timed out (host stalled?)"),
             }
         }
     };
@@ -154,10 +78,8 @@ pub async fn midi_task(
                 Ok(n) => {
                     for chunk in buf[..n].chunks(4) {
                         if chunk.len() == 4 && chunk[0] != 0 {
-                            match wmidi::MidiMessage::try_from(&chunk[1..]) {
-                                Ok(message) => {
-                                    process_remote_midi(&message);
-                                }
+                            match MidiMessage::try_from(&chunk[1..]) {
+                                Ok(message) => process_remote_midi(&message),
                                 Err(_) => info!("Received Raw: {:?}", chunk),
                             }
                         }
@@ -173,148 +95,37 @@ pub async fn midi_task(
     join(send_future, receive_future).await;
 }
 
-pub fn channel_to_index(ch: Channel) -> usize {
-    match ch {
-        Channel::Ch1 => 0,
-        Channel::Ch2 => 1,
-        Channel::Ch3 => 2,
-        Channel::Ch4 => 3,
-        Channel::Ch5 => 4,
-        Channel::Ch6 => 5,
-        Channel::Ch7 => 6,
-        Channel::Ch8 => 7,
-        Channel::Ch9 => 8,
-        Channel::Ch10 => 9,
-        Channel::Ch11 => 10,
-        Channel::Ch12 => 11,
-        Channel::Ch13 => 12,
-        Channel::Ch14 => 13,
-        Channel::Ch15 => 14,
-        Channel::Ch16 => 15,
-    }
+/// One USB-MIDI event packet on cable 0: code index number, then the MIDI
+/// status and data bytes.
+fn usb_midi_event(event: NoteEvent) -> [u8; 4] {
+    let (cin, status) = if event.on { (0x09, 0x90) } else { (0x08, 0x80) };
+    [
+        cin,
+        status | event.channel.index(),
+        u8::from(event.note),
+        VELOCITY,
+    ]
 }
-
-pub fn index_to_channel(idx: u8) -> Option<Channel> {
-    match idx {
-        0 => Some(Channel::Ch1),
-        1 => Some(Channel::Ch2),
-        2 => Some(Channel::Ch3),
-        3 => Some(Channel::Ch4),
-        4 => Some(Channel::Ch5),
-        5 => Some(Channel::Ch6),
-        6 => Some(Channel::Ch7),
-        7 => Some(Channel::Ch8),
-        8 => Some(Channel::Ch9),
-        9 => Some(Channel::Ch10),
-        10 => Some(Channel::Ch11),
-        11 => Some(Channel::Ch12),
-        12 => Some(Channel::Ch13),
-        13 => Some(Channel::Ch14),
-        14 => Some(Channel::Ch15),
-        15 => Some(Channel::Ch16),
-        _ => None,
-    }
-}
-
-// ----------------------------------------------------------------------------
-// Remote Voice Tracking (for LED Visualization)
-// ----------------------------------------------------------------------------
 
 fn process_remote_midi(message: &MidiMessage) {
-    match message {
-        MidiMessage::NoteOn(ch, note, vel) => {
-            let velocity: u8 = (*vel).into();
-            if velocity > 0 {
-                let initial_bend = CHANNEL_BENDS.lock(|b| b.get()[channel_to_index(*ch)]);
-                REMOTE_VOICES.lock(|v| {
-                    let mut voices = v.borrow_mut();
-                    if let Some(existing) = voices
-                        .iter_mut()
-                        .find(|v| v.channel == *ch && v.note == *note)
-                    {
-                        existing.velocity = *vel;
-                        existing.pitch_bend = initial_bend;
-                    } else {
-                        let _ = voices.push(RemoteVoice {
-                            channel: *ch,
-                            note: *note,
-                            velocity: *vel,
-                            pitch_bend: initial_bend,
-                        });
-                    }
-                });
-            } else {
-                REMOTE_VOICES.lock(|v| {
-                    v.borrow_mut()
-                        .retain(|v| !(v.channel == *ch && v.note == *note));
-                });
-            }
-        }
-        MidiMessage::NoteOff(ch, note, _vel) => {
+    match *message {
+        MidiMessage::NoteOn(ch, note, vel) if u8::from(vel) > 0 => {
             REMOTE_VOICES.lock(|v| {
-                v.borrow_mut()
-                    .retain(|v| !(v.channel == *ch && v.note == *note));
-            });
-        }
-        MidiMessage::PitchBendChange(ch, bend) => {
-            let bend_val: u16 = (*bend).into();
-            CHANNEL_BENDS.lock(|b| {
-                let mut bends = b.get();
-                bends[channel_to_index(*ch)] = bend_val;
-                b.set(bends);
-            });
-            REMOTE_VOICES.lock(|v| {
-                for voice in v.borrow_mut().iter_mut() {
-                    if voice.channel == *ch {
-                        voice.pitch_bend = bend_val;
-                    }
+                let mut voices = v.borrow_mut();
+                if !voices.contains(&(ch, note)) {
+                    let _ = voices.push((ch, note));
                 }
             });
         }
-        MidiMessage::ControlChange(_ch, cc, _val) => {
-            let cc_num: u8 = (*cc).into();
+        MidiMessage::NoteOn(ch, note, _) | MidiMessage::NoteOff(ch, note, _) => {
+            REMOTE_VOICES.lock(|v| v.borrow_mut().retain(|&voice| voice != (ch, note)));
+        }
+        MidiMessage::ControlChange(_, cc, _) => {
+            let cc_num: u8 = cc.into();
             if cc_num == 120 || cc_num == 123 {
                 REMOTE_VOICES.lock(|v| v.borrow_mut().clear());
             }
         }
         _ => {}
-    }
-}
-
-async fn try_send_midi_message(
-    sender: &mut embassy_usb::class::midi::Sender<'static, UsbDriver<'static, USB>>,
-    message: &wmidi::MidiMessage<'_>,
-) {
-    let mut buf = [0u8; 3];
-    if message.copy_to_slice(&mut buf).is_err() {
-        error!("Buffer copy error while sending {:?}", message);
-        return;
-    }
-
-    let cin = match message {
-        wmidi::MidiMessage::NoteOff(..) => 0x08,
-        wmidi::MidiMessage::NoteOn(..) => 0x09,
-        wmidi::MidiMessage::PolyphonicKeyPressure(..) => 0x0A,
-        wmidi::MidiMessage::ControlChange(..) => 0x0B,
-        wmidi::MidiMessage::ProgramChange(..) => 0x0C,
-        wmidi::MidiMessage::ChannelPressure(..) => 0x0D,
-        wmidi::MidiMessage::PitchBendChange(..) => 0x0E,
-        _ => 0x0F,
-    };
-
-    let packet = [cin, buf[0], buf[1], buf[2]];
-
-    match with_timeout(Duration::from_millis(10), sender.write_packet(&packet)).await {
-        Ok(Ok(_)) => {}
-        Ok(Err(_)) => error!(
-            "Packet write failure (USB Error) while sending {:?}",
-            message
-        ),
-        Err(_) => {
-            error!(
-                "Packet write timeout (Host stalled?) while sending {:?}",
-                message
-            );
-        }
     }
 }

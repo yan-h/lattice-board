@@ -2,16 +2,15 @@ use core::cell::RefCell;
 use embassy_rp::pio::Pio;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
-use embassy_time::Duration;
-use heapless::Vec;
+use embassy_time::{Duration, Ticker};
 use lattice_board_core::layout::{decode_fifths_midi, Coordinate, Layout};
 use smart_leds::RGB8;
 
 use crate::keys::ACTIVE_KEYS;
-use crate::layouts::{COLS, ROWS};
-use crate::midi::{channel_to_index, REMOTE_VOICES};
-use crate::tuning::{get_mode, get_mpe_pbr, TuningMode, PITCH_ANCHOR_CENTS};
+use crate::layouts::{CurrentLayout, NUM_LEDS};
+use crate::midi::REMOTE_VOICES;
 
+#[derive(Clone, Copy, PartialEq)]
 pub struct LedConfig {
     pub brightness: f32, // Global brightness (0-1)
     pub hue_offset: f32, // Input rotation
@@ -46,17 +45,8 @@ type LedPin = embassy_rp::peripherals::PIN_3;
 #[cfg(feature = "layout-prototype")]
 type LedPin = embassy_rp::peripherals::PIN_29;
 
-#[cfg(feature = "layout-5x25")]
-use crate::layouts::layout_5x25::Layout5x25 as CurrentLayout;
-#[cfg(feature = "layout-5x25")]
-const NUM_LEDS: usize = 125;
-
-#[cfg(feature = "layout-prototype")]
-use crate::layouts::prototype::PrototypeLayout as CurrentLayout;
-#[cfg(feature = "layout-prototype")]
-const NUM_LEDS: usize = 20;
-
-use embassy_time::Ticker;
+/// Frame period. Sending a 123-LED frame alone takes 3.75 ms.
+const FRAME: Duration = Duration::from_millis(10);
 
 #[embassy_executor::task]
 pub async fn led_task(
@@ -66,154 +56,86 @@ pub async fn led_task(
 ) {
     use embassy_rp::pio_programs::ws2812::{PioWs2812, PioWs2812Program};
 
-    // Load the program
     let program = PioWs2812Program::new(&mut pio.common);
-
-    // Configure State Machine
     let mut ws2812 = PioWs2812::new(&mut pio.common, pio.sm0, dma, pin, &program);
 
-    // Buffer: NUM_LEDS (RGB8)
+    // Each LED's idle and held colours, recomputed only when the config
+    // changes: the float maths is slow without an FPU, and the key scan
+    // shares this executor.
+    let mut colours_for: Option<LedConfig> = None;
+    let mut idle = [RGB8::default(); NUM_LEDS];
+    let mut held = [RGB8::default(); NUM_LEDS];
+
     let mut data = [RGB8::default(); NUM_LEDS];
-    let mut ticker = Ticker::every(Duration::from_millis(2));
+    let mut ticker = Ticker::every(FRAME);
 
     loop {
         ticker.next().await;
 
-        // Read config
-        let (brightness, h_offset, anchors) = LED_CONFIG.lock(|c| {
-            let config = c.borrow();
-            (config.brightness, config.hue_offset, config.rgb_anchors)
-        });
-
-        // Resolve All Active Coordinates (Local + Remote)
-        let mut active_lit: Vec<Coordinate, 32> = Vec::new();
-        let mode = get_mode();
-        // 1. Local (Physical) Keys
-        ACTIVE_KEYS.lock(|k| {
-            for &coord in k.borrow().iter() {
-                if mode == TuningMode::Fifths {
-                    if !active_lit.contains(&coord) {
-                        let _ = active_lit.push(coord);
-                    }
-                    continue;
-                }
-                let pitch_cents = crate::tuning::get_key_pitch::<CurrentLayout>(coord);
-
-                let candidates = crate::tuning::find_closest_keys::<CurrentLayout>(
-                    pitch_cents,
-                    200.0,
-                    ROWS,
-                    COLS,
-                    None, // No MIDI note bias for local keys
-                );
-
-                for c in candidates {
-                    if !active_lit.contains(&c) {
-                        let _ = active_lit.push(c);
-                    }
+        let mut config = LED_CONFIG.lock(|c| *c.borrow());
+        // The selected anchor doesn't change any colour.
+        config.selected_anchor = 0;
+        if colours_for != Some(config) {
+            for i in 0..NUM_LEDS {
+                if let Some(coord) = CurrentLayout::led_to_coord(i) {
+                    (idle[i], held[i]) = key_colours(coord, &config);
                 }
             }
-        });
+            colours_for = Some(config);
+        }
 
-        // 2. Remote (MIDI) Voices
+        let mut lit = [false; NUM_LEDS];
+        let mut light = |coord: Option<Coordinate>| {
+            if let Some(i) = coord.and_then(CurrentLayout::coord_to_led) {
+                lit[i] = true;
+            }
+        };
+        ACTIVE_KEYS.lock(|k| k.borrow().iter().for_each(|&c| light(Some(c))));
         REMOTE_VOICES.lock(|v| {
-            for voice in v.borrow().iter() {
-                if mode == TuningMode::Fifths {
-                    let ch = channel_to_index(voice.channel) as u8;
-                    if let Some(coord) =
-                        decode_fifths_midi(ch, u8::from(voice.note), CurrentLayout::center_coord())
-                    {
-                        if !active_lit.contains(&coord) {
-                            let _ = active_lit.push(coord);
-                        }
-                    }
-                    continue;
-                }
-                // Calculate target cents relative to PITCH_ANCHOR_CENTS
-                let bend_val = voice.pitch_bend as f32;
-                let mpe_pbr = get_mpe_pbr();
-                let bend_semitones = (bend_val - 8192.0) / (8192.0 / mpe_pbr);
-
-                let target_cents = ((u8::from(voice.note) as f32 - 60.0) * 100.0)
-                    + PITCH_ANCHOR_CENTS
-                    + (bend_semitones * 100.0);
-
-                let candidates = crate::tuning::find_closest_keys::<CurrentLayout>(
-                    target_cents,
-                    200.0,
-                    ROWS,
-                    COLS,
-                    Some(u8::from(voice.note)),
-                );
-
-                for coord in candidates {
-                    if !active_lit.contains(&coord) {
-                        let _ = active_lit.push(coord);
-                    }
-                }
+            for &(channel, note) in v.borrow().iter() {
+                light(decode_fifths_midi(
+                    channel.index(),
+                    u8::from(note),
+                    CurrentLayout::center_coord(),
+                ));
             }
         });
 
         for i in 0..NUM_LEDS {
-            // Get logical coordinate for this LED
-            if let Some(coord) = CurrentLayout::led_to_coord(i) {
-                // Get center coordinate for relative calculation
-                let center = CurrentLayout::center_coord();
-                let dx = coord.x as i32 - center.x as i32;
-                let dy = coord.y as i32 - center.y as i32;
-
-                // Calculate semitone position (0-11) relative to center
-                // x (Major 2nd, +2 st) = 2 Fifths
-                // y (Desc 4th, -5 st) = 1 Fifth
-                // Center matches Red (Color 0)
-                let fifths = (dx * 2) + (dy * 1);
-                let notes = (fifths * 7).rem_euclid(12); // 0..11 integer semitone
-                let _notes2 = fifths.rem_euclid(12);
-
-                // Add offset. Assuming h_offset is in degrees (0..360), map to 0..12
-                let offset_semitones = h_offset / 30.0;
-                let position = (notes as f32 + offset_semitones) % 12.0;
-
-                // Interpolate
-                let idx = position as usize; // 0..11
-                let t = position - idx as f32; // 0.0..1.0
-
-                let next_idx = (idx + 1) % 12;
-
-                let c1 = anchors[idx];
-                let c2 = anchors[next_idx];
-
-                // Linear RGB Interpolation
-                // We cast to f32 to do the math, then scale and cast back to u8
-                let mut r_f = c1.r as f32 + (c2.r as f32 - c1.r as f32) * t;
-                let mut g_f = c1.g as f32 + (c2.g as f32 - c1.g as f32) * t;
-                let mut b_f = c1.b as f32 + (c2.b as f32 - c1.b as f32) * t;
-
-                // Scale by global brightness
-                let mut scale = brightness;
-
-                // Check if this LED should be lit by any active interaction (held keys)
-                if active_lit.contains(&coord) {
-                    // Move 1/3 of the way towards white (255)
-                    r_f = r_f + (255.0 - r_f) * 0.6;
-                    g_f = g_f + (255.0 - g_f) * 0.6;
-                    b_f = b_f + (255.0 - b_f) * 0.6;
-
-                    // Double the brightness
-                    scale *= 3.0;
-                }
-
-                let r = (r_f * scale).min(255.0) as u8;
-                let g = (g_f * scale).min(255.0) as u8;
-                let b = (b_f * scale).min(255.0) as u8;
-
-                data[i] = RGB8::new(r, g, b);
-            } else {
-                let v = (50.0 * brightness) as u8;
-                data[i] = RGB8::new(v, v, v);
-            }
+            data[i] = if lit[i] { held[i] } else { idle[i] };
         }
-
         ws2812.write(&data).await;
     }
+}
+
+/// A key's colour when idle and when held: its pitch class picks a colour
+/// between the twelve anchors, and holding the key whitens and brightens it.
+fn key_colours(coord: Coordinate, config: &LedConfig) -> (RGB8, RGB8) {
+    let center = CurrentLayout::center_coord();
+    let dx = coord.x as i32 - center.x as i32;
+    let dy = coord.y as i32 - center.y as i32;
+
+    // x + 1 is 2 fifths and y + 1 is 1 fifth; the center is anchor 0.
+    let fifths = dx * 2 + dy;
+    let semitones = (fifths * 7).rem_euclid(12);
+
+    // Hue offset is in degrees (0..360); 30 degrees per semitone.
+    let position = (semitones as f32 + config.hue_offset / 30.0) % 12.0;
+    let idx = position as usize;
+    let t = position - idx as f32;
+    let c1 = config.rgb_anchors[idx];
+    let c2 = config.rgb_anchors[(idx + 1) % 12];
+    let lerp = |a: u8, b: u8| a as f32 + (b as f32 - a as f32) * t;
+    let rgb = [lerp(c1.r, c2.r), lerp(c1.g, c2.g), lerp(c1.b, c2.b)];
+
+    let scale = |rgb: [f32; 3], s: f32| {
+        let ch = |v: f32| (v * s).min(255.0) as u8;
+        RGB8::new(ch(rgb[0]), ch(rgb[1]), ch(rgb[2]))
+    };
+    // Held: 60% of the way to white, at three times the brightness.
+    let whitened = rgb.map(|v| v + (255.0 - v) * 0.6);
+    (
+        scale(rgb, config.brightness),
+        scale(whitened, config.brightness * 3.0),
+    )
 }

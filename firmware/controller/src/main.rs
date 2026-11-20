@@ -20,13 +20,10 @@ mod layouts;
 mod leds;
 mod logging;
 mod midi;
-mod mpe;
-mod tuning;
 mod usb;
 mod util;
 
 pub use lattice_board_core::layout;
-pub use lattice_board_core::pitch;
 
 bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => InterruptHandler<USB>;
@@ -42,6 +39,8 @@ async fn main(spawner: Spawner) {
     let mut config = Config::new(0x2E8A, 0x000a);
     config.manufacturer = Some("YH");
     config.product = Some("LatticeBoard");
+    // The LEDs alone can draw more than embassy's default 100 mA.
+    config.max_power = 500;
 
     let uid = util::read_unique_id(p.FLASH);
     static SERIAL_STRING: StaticCell<heapless::String<32>> = StaticCell::new();
@@ -89,8 +88,8 @@ async fn main(spawner: Spawner) {
     static MIDI_CHANNEL: StaticCell<
         embassy_sync::channel::Channel<
             embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-            midi::MidiEvent,
-            32,
+            midi::NoteEvent,
+            { midi::NOTE_QUEUE_LEN },
         >,
     > = StaticCell::new();
     let channel = MIDI_CHANNEL.init(embassy_sync::channel::Channel::new());
@@ -103,9 +102,6 @@ async fn main(spawner: Spawner) {
 
     #[cfg(feature = "layout-5x25")]
     {
-        Timer::after(Duration::from_millis(2000)).await;
-        crate::layouts::log_key_map();
-
         let row_pins = get_rows!(p);
         let data_pin = p.PIN_0.into();
         let latch_pin = p.PIN_1.into();

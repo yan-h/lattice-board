@@ -248,31 +248,3 @@ macro_rules! get_rows {
         ]
     };
 }
-
-/// Debug function to print the current key map
-#[allow(dead_code)]
-pub fn log_key_map() {
-    log::info!("--- Key Map Start ---");
-    for (r, row) in KEY_MAP.iter().enumerate() {
-        for (c, coord) in row.iter().enumerate() {
-            if let Some(coord) = coord {
-                log::info!("R{} C{}: ({}, {})", r, c, coord.x, coord.y);
-            }
-        }
-    }
-    log::info!("--- Key Map End ---");
-}
-
-/// Debug function to print the current LED map
-#[allow(dead_code)]
-pub fn log_led_map() {
-    log::info!("--- LED Map Start ---");
-    for (r, row) in LED_MATRIX.iter().enumerate() {
-        for (c, &led_idx) in row.iter().enumerate() {
-            if led_idx != NO_LED {
-                log::info!("LED {} at R{} C{}", led_idx, r, c);
-            }
-        }
-    }
-    log::info!("--- LED Map End ---");
-}
