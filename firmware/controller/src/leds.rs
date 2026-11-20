@@ -15,7 +15,6 @@ pub struct LedConfig {
     pub brightness: f32, // Global brightness (0-1)
     pub hue_offset: f32, // Input rotation
     pub rgb_anchors: [RGB8; 12],
-    pub selected_anchor: usize,
 }
 
 pub static LED_CONFIG: Mutex<CriticalSectionRawMutex, RefCell<LedConfig>> =
@@ -37,7 +36,6 @@ pub static LED_CONFIG: Mutex<CriticalSectionRawMutex, RefCell<LedConfig>> =
             RGB8::new(200, 0, 100), // 10: Magenta
             RGB8::new(215, 0, 25),  // 11: Rose
         ],
-        selected_anchor: 0,
     }));
 
 #[cfg(feature = "layout-5x25")]
@@ -72,9 +70,7 @@ pub async fn led_task(
     loop {
         ticker.next().await;
 
-        let mut config = LED_CONFIG.lock(|c| *c.borrow());
-        // The selected anchor doesn't change any colour.
-        config.selected_anchor = 0;
+        let config = LED_CONFIG.lock(|c| *c.borrow());
         if colours_for != Some(config) {
             for i in 0..NUM_LEDS {
                 if let Some(coord) = CurrentLayout::led_to_coord(i) {

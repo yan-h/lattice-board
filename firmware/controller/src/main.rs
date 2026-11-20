@@ -39,8 +39,6 @@ async fn main(spawner: Spawner) {
     let mut config = Config::new(0x2E8A, 0x000a);
     config.manufacturer = Some("YH");
     config.product = Some("LatticeBoard");
-    // The LEDs alone can draw more than embassy's default 100 mA.
-    config.max_power = 500;
 
     let uid = util::read_unique_id(p.FLASH);
     static SERIAL_STRING: StaticCell<heapless::String<32>> = StaticCell::new();

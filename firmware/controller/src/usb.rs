@@ -49,6 +49,8 @@ async fn serial_process(
 ) -> Result<(), ()> {
     let mut buf = [0u8; 64];
     let mut log_buf = [0u8; 64];
+    // The color anchor the RGB keys edit.
+    let mut selected_anchor = 0;
 
     loop {
         let mut result_n = None;
@@ -111,11 +113,11 @@ async fn serial_process(
                 let clamp_u8 =
                     |v: u8, delta: i16| -> u8 { ((v as i16 + delta).max(0).min(255)) as u8 };
                 for &b in data {
-                    let sel = config.selected_anchor;
+                    let sel = selected_anchor;
                     let mut rgb = config.rgb_anchors[sel];
                     match b {
-                        b'[' => config.selected_anchor = (config.selected_anchor + 11) % 12,
-                        b']' => config.selected_anchor = (config.selected_anchor + 1) % 12,
+                        b'[' => selected_anchor = (selected_anchor + 11) % 12,
+                        b']' => selected_anchor = (selected_anchor + 1) % 12,
                         b'r' => rgb.r = clamp_u8(rgb.r, -5),
                         b'R' => rgb.r = clamp_u8(rgb.r, 5),
                         b'g' => rgb.g = clamp_u8(rgb.g, -5),
@@ -145,7 +147,7 @@ async fn serial_process(
         if result_tick {
             let state = SERIAL_STATE.lock(|s| *s.borrow());
             if state == SerialState::Dashboard {
-                draw_dashboard(class).await;
+                draw_dashboard(class, selected_anchor).await;
             }
         }
 
@@ -153,7 +155,10 @@ async fn serial_process(
     }
 }
 
-async fn draw_dashboard(class: &mut CdcAcmClass<'static, Driver<'static, peripherals::USB>>) {
+async fn draw_dashboard(
+    class: &mut CdcAcmClass<'static, Driver<'static, peripherals::USB>>,
+    selected_anchor: usize,
+) {
     use core::fmt::Write;
     let mut out: heapless::String<1024> = heapless::String::new();
 
@@ -162,7 +167,7 @@ async fn draw_dashboard(class: &mut CdcAcmClass<'static, Driver<'static, periphe
     let active_keys = crate::keys::ACTIVE_KEYS.lock(|c| c.borrow().clone());
 
     send(class, CURSOR_HOME).await;
-    let rgb = config.rgb_anchors[config.selected_anchor];
+    let rgb = config.rgb_anchors[selected_anchor];
     let _ = write!(
         out,
         "Lattice Board Controller v0.1.0\x1B[K\r\n\
@@ -172,7 +177,7 @@ async fn draw_dashboard(class: &mut CdcAcmClass<'static, Driver<'static, periphe
          Held Keys:\x1B[K\r\n",
         config.brightness,
         config.hue_offset,
-        config.selected_anchor,
+        selected_anchor,
         rgb.r,
         rgb.g,
         rgb.b

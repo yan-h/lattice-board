@@ -1,6 +1,6 @@
 use embassy_executor::task;
 use embassy_rp::gpio::{AnyPin, Input, Level, Output, Pull};
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Duration, Timer};
 use log::info;
 
 use super::KeyEvents;
@@ -28,9 +28,8 @@ pub async fn keys_task_direct(
             // Allow signal to settle
             Timer::after(Duration::from_micros(10)).await;
 
-            let now = Instant::now();
             for (r_idx, row) in rows.iter().enumerate() {
-                events.reading(r_idx, c_idx, row.is_high(), now).await;
+                events.reading(r_idx, c_idx, row.is_high()).await;
             }
 
             col.set_low();

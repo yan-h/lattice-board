@@ -1,6 +1,6 @@
 use embassy_executor::task;
 use embassy_rp::gpio::{AnyPin, Input, Pull};
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Duration, Timer};
 use log::info;
 
 use super::KeyEvents;
@@ -84,8 +84,7 @@ pub async fn keys_task_shift_reg(
 }
 
 async fn scan_rows(c_idx: usize, rows: &[Input<'static>; ROWS], events: &mut KeyEvents) {
-    let now = Instant::now();
     for (r_idx, row) in rows.iter().enumerate() {
-        events.reading(r_idx, c_idx, row.is_high(), now).await;
+        events.reading(r_idx, c_idx, row.is_high()).await;
     }
 }

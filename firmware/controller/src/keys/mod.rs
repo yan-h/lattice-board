@@ -50,12 +50,12 @@ impl KeyEvents {
         }
     }
 
-    /// Feeds the switch at `(row, col)`'s reading, taken at `now`.
-    pub async fn reading(&mut self, row: usize, col: usize, pressed: bool, now: Instant) {
+    /// Feeds the switch at `(row, col)`'s reading, taken just now.
+    pub async fn reading(&mut self, row: usize, col: usize, pressed: bool) {
         let Some(pressed) = self.debouncer.update(
             row * COLS + col,
             pressed,
-            now.as_ticks(),
+            Instant::now().as_ticks(),
             DEBOUNCE.as_ticks(),
         ) else {
             return;
