@@ -104,21 +104,19 @@ and [TI SN74HC595 documentation](https://www.ti.com/product/SN74HC595).
   RAM for a few hundred keys and LEDs appears modest; actual scan latency and
   CPU load have not been benchmarked.
 - **Review LED refresh cost.** At an assumed 800 kHz, transmitting 350 RGB LEDs
-  takes about 10.5 ms before reset time, while the task requests a 2 ms tick.
-  Lighting also repeatedly searches the board for pitches per active voice.
-  Choose a realistic refresh rate and consider cached or change-driven updates.
-- **Review event bursts and held-key capacities.** The scanner drops events if
-  its 32-entry MIDI queue is full, potentially losing note-offs. Local held-key
-  visualization has a 16-entry capacity; other voice/highlight collections have
-  32-entry limits. More total keys do not inherently require more polyphony, but
-  the intended simultaneous-key behavior and debounce should be checked.
-- **Preserve the distinction between MIDI modes.** In the inspected
-  [tuning.rs](../firmware/controller/src/tuning.rs), `Fifths` is the default and
-  encodes octave/fifth offsets as channel/note numbers, clamped to 16 channels
-  and 128 notes. Validate the new layout center and all edge coordinates to avoid
-  clamping aliases. `Standard` with a non-700-cent fifth uses the MPE allocator,
-  which has 15 note channels; that limit is simultaneous bent voices, not total
-  keyboard keys. Do not assume the README fully describes current behavior.
+  takes about 10.5 ms before reset time. Since the firmware audit (#4), LED
+  colors are computed only when the config changes and frames run every 10 ms;
+  check that period still fits 350 LEDs.
+- **Review event bursts and held-key capacities.** The scanners debounce each
+  key (5 ms) and wait on a full 32-entry MIDI queue rather than dropping events.
+  Local held-key visualization has a 16-entry capacity and echoed notes 32. More
+  total keys do not inherently require more polyphony, but the intended
+  simultaneous-key behavior should be checked.
+- **Validate the MIDI encoding at the new edges.** The firmware has one MIDI
+  mode: each key's 12-TET note on its 12-fifth comma-bank channel
+  (`encode_fifths_midi` in [layout.rs](../firmware/core/src/layout.rs)), which
+  drops rather than clamps keys outside 128 notes or 16 banks. Validate the new
+  layout center and all edge coordinates against it.
 
 ## Suggested restart point
 

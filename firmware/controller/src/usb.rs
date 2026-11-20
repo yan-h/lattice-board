@@ -1,4 +1,3 @@
-use crate::layouts::CurrentLayout;
 use core::cell::RefCell;
 use core::pin::pin;
 use embassy_futures::select::{select, Either};
@@ -7,7 +6,7 @@ use embassy_rp::rom_data::reset_to_usb_boot;
 use embassy_rp::usb::Driver;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
-use embassy_time::{Duration, Timer};
+use embassy_time::{with_timeout, Duration, Timer};
 use embassy_usb::class::cdc_acm::CdcAcmClass;
 use log::info;
 
@@ -50,6 +49,8 @@ async fn serial_process(
 ) -> Result<(), ()> {
     let mut buf = [0u8; 64];
     let mut log_buf = [0u8; 64];
+    // The color anchor the RGB keys edit.
+    let mut selected_anchor = 0;
 
     loop {
         let mut result_n = None;
@@ -91,12 +92,12 @@ async fn serial_process(
             for &b in data {
                 if b == b'D' || b == b'd' {
                     state = if state == SerialState::Log {
-                        let _ = class.write_packet(CLEAR_SCREEN).await;
-                        let _ = class.write_packet(HIDE_CURSOR).await;
+                        send(class, CLEAR_SCREEN).await;
+                        send(class, HIDE_CURSOR).await;
                         SerialState::Dashboard
                     } else {
-                        let _ = class.write_packet(SHOW_CURSOR).await;
-                        let _ = class.write_packet(b"\r\n--- Log Mode ---\r\n").await;
+                        send(class, SHOW_CURSOR).await;
+                        send(class, b"\r\n--- Log Mode ---\r\n").await;
                         SerialState::Log
                     };
                     SERIAL_STATE.lock(|s| *s.borrow_mut() = state);
@@ -104,7 +105,7 @@ async fn serial_process(
             }
 
             if state == SerialState::Log {
-                let _ = class.write_packet(data).await;
+                send(class, data).await;
             }
 
             crate::leds::LED_CONFIG.lock(|c| {
@@ -112,11 +113,11 @@ async fn serial_process(
                 let clamp_u8 =
                     |v: u8, delta: i16| -> u8 { ((v as i16 + delta).max(0).min(255)) as u8 };
                 for &b in data {
-                    let sel = config.selected_anchor;
+                    let sel = selected_anchor;
                     let mut rgb = config.rgb_anchors[sel];
                     match b {
-                        b'[' => config.selected_anchor = (config.selected_anchor + 11) % 12,
-                        b']' => config.selected_anchor = (config.selected_anchor + 1) % 12,
+                        b'[' => selected_anchor = (selected_anchor + 11) % 12,
+                        b']' => selected_anchor = (selected_anchor + 1) % 12,
                         b'r' => rgb.r = clamp_u8(rgb.r, -5),
                         b'R' => rgb.r = clamp_u8(rgb.r, 5),
                         b'g' => rgb.g = clamp_u8(rgb.g, -5),
@@ -129,13 +130,6 @@ async fn serial_process(
                         b'-' | b'_' => config.brightness = (config.brightness - 0.02).max(0.0),
                         b'H' => config.hue_offset = (config.hue_offset + 1.0) % 360.0,
                         b'h' => config.hue_offset = (config.hue_offset - 1.0 + 360.0) % 360.0,
-                        b't' | b'T' => {
-                            let _ = crate::tuning::toggle_mode();
-                        }
-                        b'(' => crate::tuning::adjust_fifth_size(-1.0),
-                        b')' => crate::tuning::adjust_fifth_size(1.0),
-                        b'{' => crate::tuning::adjust_fifth_size(-0.1),
-                        b'}' => crate::tuning::adjust_fifth_size(0.1),
                         _ => {}
                     }
                     config.rgb_anchors[sel] = rgb;
@@ -146,14 +140,14 @@ async fn serial_process(
         if let Some(n) = result_log {
             let state = SERIAL_STATE.lock(|s| *s.borrow());
             if state == SerialState::Log {
-                let _ = class.write_packet(&log_buf[..n]).await;
+                send(class, &log_buf[..n]).await;
             }
         }
 
         if result_tick {
             let state = SERIAL_STATE.lock(|s| *s.borrow());
             if state == SerialState::Dashboard {
-                draw_dashboard(class).await;
+                draw_dashboard(class, selected_anchor).await;
             }
         }
 
@@ -161,47 +155,41 @@ async fn serial_process(
     }
 }
 
-async fn draw_dashboard(class: &mut CdcAcmClass<'static, Driver<'static, peripherals::USB>>) {
+async fn draw_dashboard(
+    class: &mut CdcAcmClass<'static, Driver<'static, peripherals::USB>>,
+    selected_anchor: usize,
+) {
     use core::fmt::Write;
     let mut out: heapless::String<1024> = heapless::String::new();
 
-    let (b, h, sel, anchors, mode, size, pbr) = crate::leds::LED_CONFIG.lock(|cfg| {
-        let cfg = cfg.borrow();
-        let m = crate::tuning::get_mode();
-        let s = crate::tuning::get_fifth_size();
-        let p = crate::tuning::get_mpe_pbr();
-        (
-            cfg.brightness,
-            cfg.hue_offset,
-            cfg.selected_anchor,
-            cfg.rgb_anchors,
-            m,
-            s,
-            p,
-        )
-    });
+    let config = crate::leds::LED_CONFIG.lock(|cfg| *cfg.borrow());
 
     let active_keys = crate::keys::ACTIVE_KEYS.lock(|c| c.borrow().clone());
 
-    let _ = class.write_packet(CURSOR_HOME).await;
-    let rgb = anchors[sel];
+    send(class, CURSOR_HOME).await;
+    let rgb = config.rgb_anchors[selected_anchor];
     let _ = write!(
         out,
         "Lattice Board Controller v0.1.0\x1B[K\r\n\
          -------------------------------\x1B[K\r\n\
-         Brightness: {:.2} | Hue: {:.0} | Mode: {:?}\x1B[K\r\n\
-         Fifth: {:.1}c | PBR: {:.1}\x1B[K\r\n\
+         Brightness: {:.2} | Hue: {:.0}\x1B[K\r\n\
          RGB: Idx {} | R{} G{} B{}\x1B[K\r\n\r\n\
          Held Keys:\x1B[K\r\n",
-        b, h, mode, size, pbr, sel, rgb.r, rgb.g, rgb.b
+        config.brightness,
+        config.hue_offset,
+        selected_anchor,
+        rgb.r,
+        rgb.g,
+        rgb.b
     );
 
     if active_keys.is_empty() {
         let _ = write!(out, " (None)\x1B[K\r\n");
     } else {
         for k in active_keys {
-            let (octaves, fifths) = crate::tuning::calculate_fifths_offsets::<CurrentLayout>(k);
-            let _ = write!(out, "Oc:{} F:{} | ", octaves, fifths);
+            if let Some((channel, note)) = crate::keys::key_note(k) {
+                let _ = write!(out, "Ch{} {} | ", channel.number(), note);
+            }
         }
         let _ = write!(out, "\x1B[K\r\n");
     }
@@ -211,25 +199,19 @@ async fn draw_dashboard(class: &mut CdcAcmClass<'static, Driver<'static, periphe
         "\r\n\x1B[1mShortcuts:\x1B[0m\x1B[K\r\n\
          [ / ]  Prev/Next Color  | r/R, g/G, b/B Adjust RGB\x1B[K\r\n\
          H / h  Hue Shift        | L / l, + / -  Brightness\x1B[K\r\n\
-         t / T  Toggle Mode     | ( / ), {{ / }}  Fifth Size\x1B[K\r\n\
          d / D  Exit Dashboard\x1B[K\r\n"
     );
 
     let _ = write!(out, "\r\nRemote MIDI:\x1B[K\r\n");
     crate::midi::REMOTE_VOICES.lock(|v| {
-        for voice in v.borrow().iter() {
-            let _ = write!(
-                out,
-                "Ch{} N{} | ",
-                crate::midi::channel_to_index(voice.channel) + 1,
-                u8::from(voice.note)
-            );
+        for &(channel, note) in v.borrow().iter() {
+            let _ = write!(out, "Ch{} {} | ", channel.number(), note);
         }
     });
     let _ = write!(out, "\x1B[K\r\n");
 
     for chunk in out.as_bytes().chunks(64) {
-        let _ = class.write_packet(chunk).await;
+        send(class, chunk).await;
     }
 }
 
@@ -237,5 +219,14 @@ async fn check_for_reset(class: &mut CdcAcmClass<'static, Driver<'static, periph
     if class.line_coding().data_rate() == 1200 {
         Timer::after(Duration::from_millis(10)).await;
         reset_to_usb_boot(0, 0);
+    }
+}
+
+/// Writes a packet if a terminal is attached, giving up after a while so a
+/// host that stops reading can't stall the loop that watches for the
+/// bootloader reset.
+async fn send(class: &mut CdcAcmClass<'static, Driver<'static, peripherals::USB>>, data: &[u8]) {
+    if class.dtr() {
+        let _ = with_timeout(Duration::from_millis(50), class.write_packet(data)).await;
     }
 }

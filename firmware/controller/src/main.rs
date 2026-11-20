@@ -20,13 +20,10 @@ mod layouts;
 mod leds;
 mod logging;
 mod midi;
-mod mpe;
-mod tuning;
 mod usb;
 mod util;
 
 pub use lattice_board_core::layout;
-pub use lattice_board_core::pitch;
 
 bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => InterruptHandler<USB>;
@@ -89,8 +86,8 @@ async fn main(spawner: Spawner) {
     static MIDI_CHANNEL: StaticCell<
         embassy_sync::channel::Channel<
             embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-            midi::MidiEvent,
-            32,
+            midi::NoteEvent,
+            { midi::NOTE_QUEUE_LEN },
         >,
     > = StaticCell::new();
     let channel = MIDI_CHANNEL.init(embassy_sync::channel::Channel::new());
@@ -103,9 +100,6 @@ async fn main(spawner: Spawner) {
 
     #[cfg(feature = "layout-5x25")]
     {
-        Timer::after(Duration::from_millis(2000)).await;
-        crate::layouts::log_key_map();
-
         let row_pins = get_rows!(p);
         let data_pin = p.PIN_0.into();
         let latch_pin = p.PIN_1.into();

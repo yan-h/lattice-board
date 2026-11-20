@@ -3,17 +3,9 @@ use embassy_rp::gpio::{AnyPin, Input, Pull};
 use embassy_time::{Duration, Timer};
 use log::info;
 
-use crate::layout::Layout;
-use crate::layouts::{CurrentLayout, COLS, ROWS};
-use core::cell::RefCell;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::blocking_mutex::Mutex;
-use heapless::Vec;
-use lattice_board_core::layout::Coordinate;
-
-// Shared state for Active Keys (Coordinates)
-pub static ACTIVE_KEYS: Mutex<CriticalSectionRawMutex, RefCell<Vec<Coordinate, 16>>> =
-    Mutex::new(RefCell::new(Vec::new()));
+use super::KeyEvents;
+use crate::layouts::{COLS, ROWS};
+use crate::midi::NoteSender;
 
 #[task]
 pub async fn keys_task_shift_reg(
@@ -22,12 +14,7 @@ pub async fn keys_task_shift_reg(
     data_pin: AnyPin,  // GPIO 0
     latch_pin: AnyPin, // GPIO 1
     clock_pin: AnyPin, // GPIO 2
-    sender: embassy_sync::channel::Sender<
-        'static,
-        embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-        crate::midi::MidiEvent,
-        32,
-    >,
+    sender: NoteSender,
 ) {
     use embassy_rp::gpio::{Level, Output};
 
@@ -41,7 +28,7 @@ pub async fn keys_task_shift_reg(
 
     info!("Keys task started. Shift Register Scanning (Active High).");
 
-    let mut key_state = [[false; COLS]; ROWS];
+    let mut events = KeyEvents::new(sender);
 
     loop {
         // Ensure we start clean
@@ -68,7 +55,7 @@ pub async fn keys_task_shift_reg(
         latch.set_low();
         Timer::after(Duration::from_micros(1)).await;
 
-        scan_rows(0, &rows, &mut key_state, &sender).await;
+        scan_rows(0, &rows, &mut events).await;
 
         // ---------------------------------------------------------
         // Columns 1..COLS: Shift in Low bits (pushing the High bit along)
@@ -88,7 +75,7 @@ pub async fn keys_task_shift_reg(
             latch.set_low();
             Timer::after(Duration::from_micros(1)).await;
 
-            scan_rows(c_idx, &rows, &mut key_state, &sender).await;
+            scan_rows(c_idx, &rows, &mut events).await;
         }
 
         // Scan rate control: Fast as possible while yielding
@@ -96,58 +83,8 @@ pub async fn keys_task_shift_reg(
     }
 }
 
-// Helper to scan rows and update state
-async fn scan_rows(
-    c_idx: usize,
-    rows: &[Input<'static>; ROWS],
-    key_state: &mut [[bool; COLS]; ROWS],
-    sender: &embassy_sync::channel::Sender<
-        'static,
-        embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-        crate::midi::MidiEvent,
-        32,
-    >,
-) {
-    use crate::midi::ToU7;
-    use log::error;
-
+async fn scan_rows(c_idx: usize, rows: &[Input<'static>; ROWS], events: &mut KeyEvents) {
     for (r_idx, row) in rows.iter().enumerate() {
-        let is_pressed = row.is_high();
-        let was_pressed = key_state[r_idx][c_idx];
-
-        if is_pressed != was_pressed {
-            key_state[r_idx][c_idx] = is_pressed;
-
-            // Debug: Raw Matrix Event (Optional, good for verification)
-            if is_pressed {
-                //info!("Raw Press: r{} c{}", r_idx, c_idx);
-            }
-
-            // State Changed
-            // State Changed
-            if let Some(coord) = CurrentLayout::key_to_coord(r_idx, c_idx) {
-                // info!("Coord: {:?}", coord);
-
-                if let Some(event) =
-                    crate::tuning::get_midi_event::<CurrentLayout>(coord, 100.to_u7(), is_pressed)
-                {
-                    if let Err(_) = sender.try_send(event) {
-                        error!("MIDI Channel Full! Dropping Event");
-                    }
-
-                    // Track Active keys
-                    ACTIVE_KEYS.lock(|c| {
-                        let mut keys = c.borrow_mut();
-                        if is_pressed {
-                            if !keys.contains(&coord) {
-                                let _ = keys.push(coord);
-                            }
-                        } else {
-                            keys.retain(|&x| x != coord);
-                        }
-                    });
-                }
-            }
-        }
+        events.reading(r_idx, c_idx, row.is_high()).await;
     }
 }

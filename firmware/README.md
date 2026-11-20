@@ -7,8 +7,8 @@ Rust firmware for the RP2040, built on [Embassy](https://embassy.dev/). The boar
 
 ## Workspace layout
 
-- `core/` — hardware-independent layout and pitch math (`layout.rs`, `pitch.rs`)
-- `controller/` — the firmware binary: key scanning, LEDs, MIDI/MPE, tuning, USB
+- `core/` — hardware-independent logic with host tests: the layout trait and MIDI encoding (`layout.rs`), key debouncing (`debounce.rs`)
+- `controller/` — the firmware binary: key scanning, LEDs, MIDI, USB
 
 ## Hardware layouts (cargo features)
 
@@ -16,10 +16,16 @@ Two mutually exclusive features in `controller/Cargo.toml` select the target har
 
 | Feature | Hardware | LEDs | LED data pin |
 |---|---|---|---|
-| `layout-prototype` (**default**) | small test board | 20 | GPIO 29 |
-| `layout-5x25` | the full 123-key board | 125 | GPIO 3 |
+| `layout-prototype` (**default**) | small test board | 19 | GPIO 29 |
+| `layout-5x25` | the full 123-key board | 123 | GPIO 3 |
 
 The default is the prototype, so **building the real keyboard requires overriding the default feature** (see below).
+
+## MIDI output
+
+Each key sends its 12-TET note (the center key is C4 = 60) on a channel that names its 12-fifth comma bank: Ch 1 = D♭..F♯, Ch 2 = +12 fifths (C♯..), Ch 16 = −12 fifths (..G♭). The 5x25 board uses Ch 1, 2 and 16. Notes the host sends back light the key they decode to.
+
+Host tests for `core`: `cargo test -p lattice-board-core --target aarch64-apple-darwin` (or your host's target triple).
 
 ## Prerequisites
 
@@ -60,7 +66,7 @@ Connect any terminal emulator to the CDC port (any baud rate except 1200, which 
 screen /dev/tty.usbmodem*
 ```
 
-The port starts in **log mode**, streaming `log`/defmt-style output. Press `d` to toggle the live **dashboard**, which shows brightness, hue, tuning mode, fifth size, MPE pitch-bend range, held keys, and remote MIDI voices, plus a key legend:
+The port starts in **log mode**, streaming `log`/defmt-style output. Press `d` to toggle the live **dashboard**, which shows brightness, hue, the selected color anchor, held keys with the channel and note each sends, and notes played back from the host, plus a key legend:
 
 | Keys | Action |
 |---|---|
@@ -69,9 +75,6 @@ The port starts in **log mode**, streaming `log`/defmt-style output. Press `d` t
 | `H` / `h` | shift hue offset ±1° |
 | `L` / `l` | brightness ±0.05 |
 | `+` / `-` | brightness ±0.02 (fine) |
-| `t` | toggle tuning mode: `Fifths` (default: 12-TET note + 12-fifth comma-bank channel; Ch 1 = D♭..F♯, Ch 2 = +12 fifths, Ch 16 = −12 fifths) ↔ `Standard` (firmware-tuned MPE / 12-TET) |
-| `(` / `)` | fifth size ±1 cent (clamped to 600–800¢) |
-| `{` / `}` | fifth size ±0.1 cent |
 | `d` | back to log mode |
 
-Settings are in-memory only — they reset to the defaults in `controller/src/leds.rs` and `controller/src/tuning.rs` on power cycle. To persist a tweak, change the defaults there and reflash.
+Settings are in-memory only — they reset to the defaults in `controller/src/leds.rs` on power cycle. To persist a tweak, change the defaults there and reflash.
