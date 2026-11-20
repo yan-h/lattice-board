@@ -27,15 +27,29 @@ static MPE_ALLOCATOR: Mutex<CriticalSectionRawMutex, RefCell<MpeVoiceAllocator>>
 static ACTIVE_CHANNELS: Mutex<CriticalSectionRawMutex, RefCell<Vec<(Coordinate, Channel), 16>>> =
     Mutex::new(RefCell::new(Vec::new()));
 
+/// Set on entering Fifths mode: Standard's MPE notes leave their bends on
+/// Ch 2..16, which Fifths reuses as comma banks and never bends itself.
+static RECENTER_BENDS: Mutex<CriticalSectionRawMutex, Cell<bool>> = Mutex::new(Cell::new(false));
+
 pub fn toggle_mode() -> TuningMode {
-    CURRENT_TUNING_MODE.lock(|m| {
+    let new_mode = CURRENT_TUNING_MODE.lock(|m| {
         let new_mode = match m.get() {
             TuningMode::Standard => TuningMode::Fifths,
             TuningMode::Fifths => TuningMode::Standard,
         };
         m.set(new_mode);
         new_mode
-    })
+    });
+    if new_mode == TuningMode::Fifths {
+        RECENTER_BENDS.lock(|flag| flag.set(true));
+    }
+    new_mode
+}
+
+/// Whether the MPE channels' bends are owed a reset, asked once per switch
+/// into Fifths mode by the MIDI task before its next event.
+pub fn take_recenter_bends() -> bool {
+    RECENTER_BENDS.lock(|flag| flag.replace(false))
 }
 
 pub fn get_mode() -> TuningMode {

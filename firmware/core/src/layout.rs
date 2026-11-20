@@ -62,8 +62,8 @@ pub trait Layout: Sync {
 /// - `note` is the 12-TET MIDI note (`0..=127`, center = 60).
 /// - `channel` (`0..=15`) is the signed 12-fifth comma bank modulo 16, with
 ///   channel 0 (MIDI Ch 1) carrying the central twelve fifths `D♭..F♯`
-///   (`fifths ∈ -5..=+6`), Ch 2 carrying `+12` fifths (`C♯..E♯♯`), and Ch 16
-///   carrying `−12` fifths (`G♭..A♭♭`).
+///   (`fifths ∈ -5..=+6`), Ch 2 carrying `+12` fifths (`+7..=+18`, from C♯),
+///   and Ch 16 carrying `−12` fifths (`-17..=-6`, down from G♭).
 ///
 /// Returns `None` rather than clamping or aliasing if the note lies outside
 /// `0..=127` or the bank lies outside `-8..=+7`.

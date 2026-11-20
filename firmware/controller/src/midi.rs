@@ -92,6 +92,16 @@ pub async fn midi_task(
         loop {
             let event = receiver.receive().await;
 
+            if crate::tuning::take_recenter_bends() {
+                for channel in (1..16).filter_map(index_to_channel) {
+                    let center = MidiMessage::PitchBendChange(
+                        channel,
+                        wmidi::U14::try_from(8192u16).unwrap(),
+                    );
+                    try_send_midi_message(&mut sender, &center).await;
+                }
+            }
+
             match event {
                 MidiEvent::NoteOn {
                     channel,
