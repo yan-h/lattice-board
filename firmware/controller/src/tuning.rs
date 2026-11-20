@@ -4,7 +4,7 @@ use core::cell::{Cell, RefCell};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use heapless::Vec;
-use lattice_board_core::layout::{Coordinate, Layout};
+use lattice_board_core::layout::{encode_fifths_midi, Coordinate, Layout};
 use micromath::F32Ext;
 use wmidi::{Channel, Note, U7};
 
@@ -63,9 +63,6 @@ pub fn adjust_mpe_pbr(delta: f32) {
         f.set((current + delta).max(0.1).min(96.0));
     });
 }
-
-const FIFTHS_CENTER_CHANNEL: u8 = 4;
-const FIFTHS_CENTER_PITCH: u8 = 60;
 
 /// - x + 1, y - 1 (UP-RIGHT) is a Perfect Fifth.
 /// - x + 0, y - 2 (UP UP) is an Octave.
@@ -171,11 +168,7 @@ pub fn get_midi_event<L: Layout>(
             }
         }
         TuningMode::Fifths => {
-            let (oc, fifths) = calculate_fifths_offsets::<L>(coord);
-            // Spec: Channel increases with physical octaves
-            let ch_idx = (FIFTHS_CENTER_CHANNEL as i16 + oc).clamp(0, 15) as u8;
-            // Spec: Pitch increases with physical fifths
-            let pitch_idx = (FIFTHS_CENTER_PITCH as i16 + fifths).clamp(0, 127) as u8;
+            let (ch_idx, pitch_idx) = encode_fifths_midi(coord, L::center_coord())?;
 
             if let Ok(note) = Note::try_from(pitch_idx) {
                 let channel = index_to_channel(ch_idx).unwrap_or(Channel::Ch1);

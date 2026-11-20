@@ -4,13 +4,13 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_time::Duration;
 use heapless::Vec;
-use lattice_board_core::layout::{Coordinate, Layout};
+use lattice_board_core::layout::{decode_fifths_midi, Coordinate, Layout};
 use smart_leds::RGB8;
 
 use crate::keys::ACTIVE_KEYS;
 use crate::layouts::{COLS, ROWS};
-use crate::midi::REMOTE_VOICES;
-use crate::tuning::{get_mpe_pbr, PITCH_ANCHOR_CENTS};
+use crate::midi::{channel_to_index, REMOTE_VOICES};
+use crate::tuning::{get_mode, get_mpe_pbr, TuningMode, PITCH_ANCHOR_CENTS};
 
 pub struct LedConfig {
     pub brightness: f32, // Global brightness (0-1)
@@ -87,9 +87,16 @@ pub async fn led_task(
 
         // Resolve All Active Coordinates (Local + Remote)
         let mut active_lit: Vec<Coordinate, 32> = Vec::new();
-        // 1. Local (Physical) Keys: Find all enharmonic equivalents
+        let mode = get_mode();
+        // 1. Local (Physical) Keys
         ACTIVE_KEYS.lock(|k| {
             for &coord in k.borrow().iter() {
+                if mode == TuningMode::Fifths {
+                    if !active_lit.contains(&coord) {
+                        let _ = active_lit.push(coord);
+                    }
+                    continue;
+                }
                 let pitch_cents = crate::tuning::get_key_pitch::<CurrentLayout>(coord);
 
                 let candidates = crate::tuning::find_closest_keys::<CurrentLayout>(
@@ -111,6 +118,17 @@ pub async fn led_task(
         // 2. Remote (MIDI) Voices
         REMOTE_VOICES.lock(|v| {
             for voice in v.borrow().iter() {
+                if mode == TuningMode::Fifths {
+                    let ch = channel_to_index(voice.channel) as u8;
+                    if let Some(coord) =
+                        decode_fifths_midi(ch, u8::from(voice.note), CurrentLayout::center_coord())
+                    {
+                        if !active_lit.contains(&coord) {
+                            let _ = active_lit.push(coord);
+                        }
+                    }
+                    continue;
+                }
                 // Calculate target cents relative to PITCH_ANCHOR_CENTS
                 let bend_val = voice.pitch_bend as f32;
                 let mpe_pbr = get_mpe_pbr();
